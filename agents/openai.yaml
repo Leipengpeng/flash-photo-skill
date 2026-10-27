@@ -1,0 +1,4 @@
+interface:
+  display_name: "摄影灯 · 原图重打光"
+  short_description: "按深度和材质规划直闪、面板、条箱、环灯与多灯，逐灯控制形状、大小、方向并审图。"
+  default_prompt: "使用 $flash-photo-skill，以原图和已认可强闪观感为依据，审核深度与材质、逐灯规划形状大小和方向，再从原始照片生成摄影灯效果并审图。"
