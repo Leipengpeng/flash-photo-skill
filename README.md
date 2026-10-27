@@ -1,8 +1,8 @@
-> The light slides down the glass, and drops a pool of green.
+> Inside, the crimson room bloomed with light.
 >
-> 光沿着玻璃滑下，滴成一汪绿。
+> 屋里，绯红色的房间在灯光中明亮起来。
 
-——弗吉尼亚·伍尔夫，《蓝与绿》“绿”（收于《星期一或星期二》，1921年，原书第81页）。[英文原文](https://www.gutenberg.org/cache/epub/29220/pg29220-images.html)；中文为本项目自译。
+——F. Scott Fitzgerald，《了不起的盖茨比》第一章
 
 # 闪光灯 Skills
 
