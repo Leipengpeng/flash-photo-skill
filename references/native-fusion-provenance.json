@@ -1,0 +1,54 @@
+{
+  "algorithm_id": "F04-F06-2026-11-03",
+  "approved_methods": [
+    "F04",
+    "F06"
+  ],
+  "unique_winner_selected": false,
+  "exported_functions_AST_identical": true,
+  "module_sha256": "1ab2386d7a45d113c3183300760670208220b68eadb5fa4aebf643c21f7fffd5",
+  "sources": [
+    {
+      "frozen_source": "2026-11-02-edge-transfer/edge_transfer.py",
+      "sha256": "18f0095b574f691046b6ada0138db946fb2927ff0e490f204992dca9d4d8d9ce",
+      "functions": [
+        "load_source",
+        "srgb_to_linear",
+        "linear_to_float",
+        "linear_to_srgb",
+        "area_weights"
+      ]
+    },
+    {
+      "frozen_source": "2026-11-02-quotient-lab/quotient_lab.py",
+      "sha256": "5bc233522b33df6686fdcbc46f61f293793fad05c2550457cba46362b065460f",
+      "functions": [
+        "median",
+        "make_anchors",
+        "model_neighbors",
+        "fit_nuisance",
+        "save_npz",
+        "export_result"
+      ]
+    },
+    {
+      "frozen_source": "2026-11-03-detail-diagnosis/diagnose.py",
+      "sha256": "5ec5c8bc508f69528a7efc5e81820c4cb996e192f61b4dc9343a3605bbd07c01",
+      "functions": [
+        "blur"
+      ]
+    },
+    {
+      "frozen_source": "2026-11-03-detail-diagnosis/detail_variants.py",
+      "sha256": "1396e38f4c6e19a6c8650e7554f61308d3f8ea025424ddedaabb5824c6fa152e",
+      "functions": [
+        "recursive_regularize",
+        "energy_ratio",
+        "structure_confidence",
+        "make_models",
+        "query_pixels",
+        "evaluate_gain"
+      ]
+    }
+  ]
+}
