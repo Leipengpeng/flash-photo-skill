@@ -1,4 +1,4 @@
 interface:
   display_name: "摄影灯 · 原图重打光"
-  short_description: "为实拍照片设计光源，可选直接生成或F06/F04原尺寸融合，保留Delta供比较。"
-  default_prompt: "使用 $flash-photo-skill，按深度、材质和逐灯规划为原图加明显直闪，同时保留Image完整成图和F06原尺寸融合图、Delta；已有同源参考时复用。"
+  short_description: "给实拍照片重新布光，可选模型直出或原尺寸融合。"
+  default_prompt: "使用 $flash-photo-skill 给这张照片加明显的正面直闪，保留原片尺寸。"

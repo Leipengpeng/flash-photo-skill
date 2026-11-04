@@ -1,14 +1,8 @@
-"""Original-size F04/F06 illumination transfer from an existing full relit image.
-
-No image-generation calls, spatial RGB warp, ordinary resize enlargement, model
-training or final sharpening. Actual output RGB values change with illumination.
-"""
+"""Map lighting from a relit reference back to the original photo."""
 from pathlib import Path
 import argparse
 import json
 import math
-import shutil
-import sys
 import time
 
 import numpy as np
@@ -18,7 +12,8 @@ from scipy.spatial import cKDTree
 import _native_fusion_core as core
 
 VERSION='4.0-native-F04-F06'
-METHODS=('F06','F04')
+DEFAULT_METHOD = 'F06'
+METHODS = (DEFAULT_METHOD, 'F04')
 
 
 def area_reduce_codes(codes,size):
@@ -46,7 +41,7 @@ def preflight(inputs,out,methods):
     return out
 
 
-def query(codes,features,working_size,y,stop,ct,st):
+def query(codes,working_size,y,stop,ct,st):
     h,w=codes.shape[:2];rw,rh=working_size
     xx=np.tile((np.arange(w,dtype=np.float32)+.5)*rw/w-.5,stop-y)
     yy=np.repeat((np.arange(y,stop,dtype=np.float32)+.5)*rh/h-.5,w)
@@ -60,7 +55,7 @@ def render(codes,features,working_size,fields,methods,strength=1.):
     st=cKDTree(features[:,:2],balanced_tree=True,compact_nodes=True)
     h,w=codes.shape[:2];final={m:np.empty_like(codes) for m in methods};clips={m:0 for m in methods}
     for y in range(0,h,8):
-        stop=min(h,y+8);color,space=query(codes,features,working_size,y,stop,ct,st)
+        stop=min(h,y+8);color,space=query(codes,working_size,y,stop,ct,st)
         src=core.srgb_to_linear(codes[y:stop]).reshape(-1,3)
         for m in methods:
             ev=np.clip(core.evaluate_gain(m,fields,color,space)*strength,-3,3)
@@ -89,8 +84,6 @@ def export(out,codes,final,clips,source_info,reference_info,working_size,feature
             'clip_above_one_component_fraction':clips[method]/(h*w*3),'delta':delta,
             'source_warped':False,'reference_warped':False,'ordinary_spatial_interpolation':False,
             'RGB_blur_or_post_sharpening':False,'actual_numeric_guide_maps_used':[],
-            'image_generation_upload_download_calls':0,'aesthetic_evaluation':'user only',
-            'meaning':'Original dimensions and original raster as base; changed RGB values; not RAW or lossless information recovery',
             'algorithm_module_sha256':core.file_hash(Path(core.__file__))}
         core.write_json(folder/'report.json',report)
         results.append({'method':method,'final':str(folder/'final.png'),'delta':str(folder/'delta_linear.npz'),
@@ -154,7 +147,7 @@ def apply(args):
 def cli():
     p=argparse.ArgumentParser(description=__doc__);sub=p.add_subparsers(dest='command',required=True)
     r=sub.add_parser('run');r.add_argument('--source',required=True);r.add_argument('--reference',required=True)
-    r.add_argument('--out',required=True);r.add_argument('--methods',nargs='+',choices=METHODS,default=['F06'])
+    r.add_argument('--out',required=True);r.add_argument('--methods', nargs='+', choices=METHODS, default=[DEFAULT_METHOD], help=argparse.SUPPRESS)
     r.add_argument('--max-aspect-error',type=float,default=.01);r.add_argument('--strength',type=float,default=1.)
     a=sub.add_parser('apply');a.add_argument('--source',required=True);a.add_argument('--model',required=True)
     a.add_argument('--out',required=True);a.add_argument('--strength',type=float,default=1.)
@@ -163,7 +156,14 @@ def cli():
     if args.command=='run' and (not math.isfinite(args.max_aspect_error) or not 0<=args.max_aspect_error<=.01):
         raise ValueError('Aspect tolerance must be in [0,.01]')
     result=run(args) if args.command=='run' else apply(args)
-    print(json.dumps({'out':str(Path(args.out).resolve()),'methods':[x['method'] for x in result['methods']]},ensure_ascii=False))
+    results = result['methods']
+    summary = {
+        'out': str(Path(args.out).resolve()),
+        'methods': [entry['method'] for entry in results],
+    }
+    if len(results) == 1:
+        summary.update(final=results[0]['final'], model=results[0]['model'])
+    print(json.dumps(summary, ensure_ascii=False))
 
 
 if __name__=='__main__':cli()

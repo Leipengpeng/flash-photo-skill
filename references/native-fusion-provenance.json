@@ -4,7 +4,7 @@
     "F04",
     "F06"
   ],
-  "unique_winner_selected": false,
+  "unique_winner_selected": true,
   "exported_functions_AST_identical": true,
   "module_sha256": "1ab2386d7a45d113c3183300760670208220b68eadb5fa4aebf643c21f7fffd5",
   "sources": [
@@ -50,5 +50,7 @@
         "evaluate_gain"
       ]
     }
-  ]
+  ],
+  "selected_method": "F06",
+  "selected_on": "2026-11-04"
 }
