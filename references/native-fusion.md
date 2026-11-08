@@ -1,13 +1,19 @@
 # 原尺寸融合
 
-准备原始照片和同一画幅的完整打光图。每种布光只需一张模型成图，可复用已有参考。
+`--source` 使用完整原片文件，路径指向原始附件或用户指定的本地文件。`--reference` 使用同一画幅的完整打光图。可用缩小副本生成参考，也可复用已有参考。
 
 ```bash
 python -m pip install -r scripts/requirements-native.txt
 python scripts/native_fusion.py run --source original.jpg --reference relit.jpg --out work/native
 ```
 
-脚本最后一行 JSON 的 `final` 字段指向原尺寸 PNG。运行目录内同时保存规范化原图、相减预览、融合后 Delta 和可重放的照明数据。原尺寸以照片按 EXIF 转正后的显示宽高为准。
+## 文件交付
+
+脚本成功后的最后一行 JSON 提供 `final`、`format`、`size`、`bit_depth` 和 `sha256`。确认 `final` 指向的文件存在且确实是 PNG，`size` 与原片按 EXIF 转正后的宽高一致，位深符合输入。8 位照片输出 8 位 RGB PNG。16 位不透明 RGB 或灰度 sRGB PNG 和单页 TIFF 输出 16 位 RGB PNG。两种输出均采用无损编码。
+
+直接把 `final` 文件作为附件交付，或提供可打开的绝对路径。需要另存成品时按字节复制，可用 `sha256` 核验。平台只提供可能转码的图片卡片时，将成品 PNG 装进 ZIP 作为文件交付。缩览、模型直出和 Delta 预览分别标注用途。
+
+原片不可访问、融合运行失败或格式不受支持时，说明未完成原尺寸融合及原因。部分 16 位 TIFF 压缩或嵌入的色彩配置需要额外解码或色彩转换组件，可按脚本提示安装。相机 RAW 或当前环境不支持的输入可预先导出为 sRGB PNG，并保留目标位深。运行目录还保存规范化原图、相减预览、融合后 Delta 和可重放的照明数据。
 
 ## 照明怎么回到原片
 

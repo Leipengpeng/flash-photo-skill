@@ -3,6 +3,7 @@ from pathlib import Path
 import argparse
 import json
 import math
+import struct
 import time
 
 import numpy as np
@@ -10,6 +11,7 @@ from PIL import Image
 from scipy.spatial import cKDTree
 
 import _native_fusion_core as core
+from _native_image_io import save_rgb_png
 
 VERSION='4.0-native-F04-F06'
 DEFAULT_METHOD = 'F06'
@@ -45,7 +47,8 @@ def query(codes,working_size,y,stop,ct,st):
     h,w=codes.shape[:2];rw,rh=working_size
     xx=np.tile((np.arange(w,dtype=np.float32)+.5)*rw/w-.5,stop-y)
     yy=np.repeat((np.arange(y,stop,dtype=np.float32)+.5)*rh/h-.5,w)
-    q=np.column_stack((xx/4.,yy/4.,codes[y:stop].reshape(-1,3).astype(np.float32)/(255*.075)))
+    code_scale = np.iinfo(codes.dtype).max * .075
+    q=np.column_stack((xx/4.,yy/4.,codes[y:stop].reshape(-1,3).astype(np.float32)/code_scale))
     _,color=ct.query(q,k=9,workers=2);_,space=st.query(q[:,:2],k=9,workers=2)
     return color,space
 
@@ -62,32 +65,53 @@ def render(codes,features,working_size,fields,methods,strength=1.):
             target=src*np.exp2(ev)
             if not np.isfinite(target).all():raise ValueError('Non-finite composition')
             clips[m]+=int(np.count_nonzero(target>1))
-            final[m][y:stop]=core.linear_to_srgb(target).reshape(stop-y,w,3)
+            final[m][y:stop]=core.linear_to_srgb(target, codes.dtype).reshape(stop-y,w,3)
         if y%512==0:print('native rows '+str(stop)+'/'+str(h),flush=True)
     return final,clips
 
 
+def describe_final(path, width, height, bit_depth):
+    with path.open('rb') as file:
+        header = file.read(26)
+    if len(header) != 26 or header[:16] != b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR':
+        raise ValueError('Final artifact is not a PNG')
+    actual_width, actual_height, actual_depth, color_type = struct.unpack('>IIBB', header[16:])
+    if (actual_width, actual_height, actual_depth, color_type) != (width, height, bit_depth, 2):
+        raise ValueError('Final PNG does not match the requested RGB dimensions and bit depth')
+    return {
+        'final': str(path),
+        'format': 'PNG',
+        'size': [width, height],
+        'bit_depth': bit_depth,
+        'sha256': core.file_hash(path),
+    }
+
+
 def export(out,codes,final,clips,source_info,reference_info,working_size,features,fields,strength):
     results=[];h,w=codes.shape[:2]
-    Image.fromarray(codes).save(out/'original-sRGB.png',icc_profile=core.SRGB_ICC,compress_level=3)
+    save_rgb_png(out/'original-sRGB.png', codes, core.SRGB_ICC)
     for method,encoded in final.items():
         folder=out/method;folder.mkdir(exist_ok=True)
-        Image.fromarray(encoded).save(folder/'final.png',icc_profile=core.SRGB_ICC,compress_level=3)
+        final_path = folder/'final.png'
+        save_rgb_png(final_path, encoded, core.SRGB_ICC)
+        artifact = describe_final(final_path, w, h, np.iinfo(encoded.dtype).bits)
         delta=core.export_result(folder,encoded,codes,core)
         model={k:fields[k] for k in ('R08','F02','F06','confidence')}
         model.update(features=features,working_size=np.array(working_size,np.int32),method=np.array(method),
             source_sha256=np.array(source_info['sha256']),reference_sha256=np.array(reference_info['sha256']),
+            source_bit_depth=np.array(source_info['bit_depth']),
             version=np.array(VERSION),policy_json=np.array(json.dumps(core.POLICY,sort_keys=True)))
         core.save_npz(folder/'model.npz',model)
         report={'version':VERSION,'method':method,'native_size':[w,h],'working_size':list(working_size),
             'source':source_info,'reference':reference_info,'strength':strength,'policy':core.POLICY,
+            'output':artifact,
             'clip_above_one_component_fraction':clips[method]/(h*w*3),'delta':delta,
             'source_warped':False,'reference_warped':False,'ordinary_spatial_interpolation':False,
             'RGB_blur_or_post_sharpening':False,'actual_numeric_guide_maps_used':[],
             'algorithm_module_sha256':core.file_hash(Path(core.__file__))}
         core.write_json(folder/'report.json',report)
-        results.append({'method':method,'final':str(folder/'final.png'),'delta':str(folder/'delta_linear.npz'),
-                        'model':str(folder/'model.npz'),'sha256':core.file_hash(folder/'final.png')})
+        results.append(dict(artifact, method=method, delta=str(folder/'delta_linear.npz'),
+                            model=str(folder/'model.npz')))
     return results
 
 
@@ -129,12 +153,15 @@ def apply(args):
     with np.load(args.model,allow_pickle=False) as z:
         method=str(z['method']);features=z['features'];size=z['working_size'].tolist()
         expected=str(z['source_sha256']);ref_hash=str(z['reference_sha256'])
+        model_depth = int(z['source_bit_depth']) if 'source_bit_depth' in z else 8
         if str(z['version'])!=VERSION or json.loads(str(z['policy_json']))!=core.POLICY:
             raise ValueError('Cached model uses a different frozen policy')
         fields={k:z[k] for k in ('R08','F02','F06','confidence')}
     if method not in METHODS:raise ValueError('Unknown approved method')
     codes,source_info=core.load_source(args.source)
     if source_info['sha256']!=expected:raise ValueError('Model belongs to another source file')
+    if source_info['bit_depth'] != model_depth:
+        raise ValueError('Cached model uses a different source bit depth; run fusion again from the original')
     out=preflight((args.source,args.model),args.out,[method])
     reference_info={'path':'cached full-relit reference','sha256':ref_hash}
     final,clips=render(codes,features,size,fields,[method],args.strength)
@@ -162,8 +189,9 @@ def cli():
         'methods': [entry['method'] for entry in results],
     }
     if len(results) == 1:
-        summary.update(final=results[0]['final'], model=results[0]['model'])
-    print(json.dumps(summary, ensure_ascii=False))
+        summary.update((key, results[0][key]) for key in
+                       ('final', 'model', 'format', 'size', 'bit_depth', 'sha256'))
+    print(json.dumps(summary))
 
 
 if __name__=='__main__':cli()

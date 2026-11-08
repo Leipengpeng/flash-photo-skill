@@ -15,6 +15,8 @@ from PIL import Image, ImageCms, ImageOps
 from scipy.sparse import csr_matrix
 from scipy.spatial import cKDTree
 
+from _native_image_io import load_high_bit_rgb
+
 EPS=.001
 LUMA=np.array([.2126,.7152,.0722],np.float32)
 SRGB_PROFILE=ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB'))
@@ -36,34 +38,52 @@ POLICY={'version': '8.0-detail-separation-six-experiments', 'anchor_stride': 2, 
 
 def load_source(path):
     with Image.open(path) as im:
-        im.load()
         stored = im.size
+        image_format = im.format
         orientation = int(im.getexif().get(274, 1))
-        profile = im.info.get('icc_profile')
-        image = ImageOps.exif_transpose(im)
-        if 'A' in image.getbands() and image.getchannel('A').getextrema() != (255, 255):
-            raise ValueError('Photographic input must be opaque')
-        if profile:
-            image = ImageCms.profileToProfile(image, ImageCms.ImageCmsProfile(io.BytesIO(profile)),
-                                             SRGB_PROFILE, outputMode='RGB')
+        high_bit = load_high_bit_rgb(path, im, orientation)
+        if high_bit is None:
+            im.load()
+            stored = im.size
+            orientation = int(im.getexif().get(274, 1))
+            profile = im.info.get('icc_profile')
+            image = ImageOps.exif_transpose(im)
+            if 'A' in image.getbands():
+                alpha = image.getchannel('A')
+            elif 'transparency' in image.info:
+                alpha = image.convert('RGBA').getchannel('A')
+            else:
+                alpha = None
+            if alpha is not None and alpha.getextrema() != (255, 255):
+                raise ValueError('Photographic input must be opaque')
+            if profile:
+                image = ImageCms.profileToProfile(image, ImageCms.ImageCmsProfile(io.BytesIO(profile)),
+                                                  SRGB_PROFILE, outputMode='RGB')
+                color = 'ICC converted to sRGB'
+            else:
+                image = image.convert('RGB')
+                color = 'unprofiled RGB assumed sRGB'
+            codes = np.asarray(image, np.uint8).copy()
         else:
-            image = image.convert('RGB')
-        codes = np.asarray(image, np.uint8).copy()
+            codes, color = high_bit
+            if image_format == 'TIFF':
+                stored = (int(im.tag_v2[256]), int(im.tag_v2[257]))
     return codes, {'path': str(Path(path).resolve()), 'sha256': file_hash(path),
                    'stored_size': list(stored), 'native_size': [codes.shape[1], codes.shape[0]],
-                   'exif_orientation': orientation,
-                   'color': 'ICC converted to sRGB' if profile else 'unprofiled RGB assumed sRGB'}
+                   'exif_orientation': orientation, 'format': image_format,
+                   'bit_depth': np.iinfo(codes.dtype).bits, 'color': color}
 
 def srgb_to_linear(codes):
-    x = np.asarray(codes, np.float32) / np.float32(255)
+    x = np.asarray(codes, np.float32) / np.float32(np.iinfo(codes.dtype).max)
     return np.where(x <= .04045, x / 12.92, ((x + .055) / 1.055) ** 2.4).astype(np.float32)
 
 def linear_to_float(x):
     x = np.clip(x, 0, 1)
     return np.where(x <= .0031308, x * 12.92, 1.055 * np.power(x, 1 / 2.4) - .055).astype(np.float32)
 
-def linear_to_srgb(x):
-    return np.clip(np.rint(linear_to_float(x) * 255), 0, 255).astype(np.uint8)
+def linear_to_srgb(x, dtype=np.uint8):
+    maximum = np.iinfo(dtype).max
+    return np.clip(np.rint(linear_to_float(x) * maximum), 0, maximum).astype(dtype)
 
 def area_weights(source_length, target_length):
     """Pixel footprint overlap weights, not interpolated point samples."""
@@ -160,7 +180,8 @@ def export_result(folder,final,source,base):
                 src=base.srgb_to_linear(source[y:y+8]);delta=base.srgb_to_linear(final[y:y+8])-src
                 if not np.all(np.isfinite(delta)):raise ValueError('Non-finite Delta')
                 limits[0]=min(limits[0],float(delta.min()));limits[1]=max(limits[1],float(delta.max()))
-                error=np.max(np.abs(base.linear_to_srgb(src+delta).astype(np.int16)-final[y:y+8].astype(np.int16)))
+                reconstructed = base.linear_to_srgb(src+delta, final.dtype).astype(np.int32)
+                error = np.max(np.abs(reconstructed-final[y:y+8].astype(np.int32)))
                 max_error=max(max_error,int(error));f.write(delta.astype('<f4',copy=False).tobytes())
     if max_error:raise ValueError('Delta reconstruction failed')
     building.replace(path)
@@ -169,6 +190,7 @@ def export_result(folder,final,source,base):
     Image.fromarray(np.clip(np.rint(128+127*d),0,255).astype(np.uint8)).save(folder/'delta-preview.png')
     report={'file':path.name,'key':'delta_linear','shape':[h,w,3],'dtype':'float32',
             'space':'linear sRGB','definition':'decode(delivered final)-decode(original sRGB)',
+            'rgb_bit_depth':np.iinfo(final.dtype).bits,
             'range':limits,'max_reconstruction_code_error':max_error,'lossless_compression':True,
             'preview':'128 neutral; round(128+127*delta); integer stride; not an alpha layer'}
     write_json(folder/'delta.json',report)

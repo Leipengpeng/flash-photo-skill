@@ -2,15 +2,22 @@
 from pathlib import Path
 import argparse
 import contextlib
+import hashlib
+import json
+import subprocess
+import sys
 import io
 import tempfile
 import unittest
 
+import cv2
 import numpy as np
+import tifffile
 from PIL import Image
 
 import native_fusion as native
 import _native_fusion_core as core
+from _native_image_io import save_rgb_png
 
 
 class NativeFusionTests(unittest.TestCase):
@@ -52,6 +59,81 @@ class NativeFusionTests(unittest.TestCase):
             ap=argparse.Namespace(source=str(bad),model=str(root/'result/F06/model.npz'),out=str(root/'bad'),strength=1.)
             with self.assertRaisesRegex(ValueError,'another source'):native.apply(ap)
             with self.assertRaisesRegex(ValueError,'already exists'):native.run(args)
+
+    def test_native_16bit_tiff_to_png_preserves_values_and_replays(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            y, x = np.mgrid[0:32, 0:48]
+            pixels = np.stack((1000+31*x+501*y, 2000+529*x+37*y, 2500+89*x+271*y), axis=-1)
+            pixels = pixels.astype(np.uint16)
+            source = root / 'source.tiff'
+            tifffile.imwrite(source, pixels, photometric='rgb',
+                             extratags=[(274, 'H', 1, 6, False), (34675, 'B', len(core.SRGB_ICC), core.SRGB_ICC, False)])
+            oriented = np.rot90(pixels, k=3)
+            loaded, info = core.load_source(source)
+            np.testing.assert_array_equal(loaded, oriented)
+            self.assertEqual(info['bit_depth'], 16)
+            reference = root / 'reference.jpg'
+            reference_codes = core.linear_to_srgb(core.srgb_to_linear(oriented) * 1.5)
+            Image.fromarray(reference_codes).resize((16,24)).save(reference, quality=95)
+            script = str(Path(native.__file__).resolve())
+            process = subprocess.run(
+                [sys.executable, script, 'run', '--source', str(source), '--reference', str(reference),
+                 '--out', str(root/'native')], check=True, capture_output=True,
+            )
+            delivery = json.loads(process.stdout.splitlines()[-1])
+            self.assertEqual(delivery['format'], 'PNG')
+            self.assertEqual(delivery['size'], [32,48])
+            self.assertEqual(delivery['bit_depth'], 16)
+            final = Path(delivery['final'])
+            self.assertEqual(delivery['sha256'], hashlib.sha256(final.read_bytes()).hexdigest())
+            final_codes = cv2.imdecode(np.frombuffer(final.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)[..., ::-1]
+            self.assertEqual(final_codes.dtype, np.dtype('uint16'))
+            self.assertFalse(np.array_equal(final_codes, oriented))
+            self.assertGreater(np.unique(final_codes[...,0]).size, 256)
+            with Image.open(final) as exported:
+                self.assertTrue(exported.info['icc_profile'])
+            with np.load(final.parent/'delta_linear.npz') as delta:
+                recovered = core.linear_to_srgb(core.srgb_to_linear(oriented) + delta['delta_linear'], np.uint16)
+                np.testing.assert_array_equal(recovered, final_codes)
+
+            for strength, expected in ((0.0, oriented), (1.0, final_codes)):
+                args = argparse.Namespace(source=str(source), model=delivery['model'],
+                                          out=str(root/f'replay{strength}'), strength=strength)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    replay = native.apply(args)
+                replay_codes, _ = core.load_source(replay['methods'][0]['final'])
+                np.testing.assert_array_equal(replay_codes, expected)
+
+            with np.load(delivery['model'], allow_pickle=False) as model:
+                legacy = {key:model[key] for key in model.files if key != 'source_bit_depth'}
+            legacy_path = root/'legacy.npz'
+            np.savez(legacy_path, **legacy)
+            args = argparse.Namespace(source=str(source), model=str(legacy_path),
+                                      out=str(root/'legacy-replay'), strength=1.0)
+            with self.assertRaisesRegex(ValueError, 'different source bit depth'):
+                native.apply(args)
+
+    def test_native_16bit_png_zero_strength_preserves_low_bits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ramp = (np.arange(32*48, dtype=np.uint16).reshape(32,48)*31)
+            pixels = np.stack((ramp, ramp+3, ramp+7), axis=-1)
+            source = root/'source.png'
+            ok, raw = cv2.imencode('.png', pixels[..., ::-1])
+            self.assertTrue(ok)
+            source.write_bytes(raw.tobytes())
+            reference = root/'reference.png'
+            save_rgb_png(reference, pixels//2, core.SRGB_ICC)
+            args = argparse.Namespace(source=str(source), reference=str(reference), out=str(root/'result'),
+                                      methods=['F06'], strength=0.0, max_aspect_error=.01)
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = native.run(args)['methods'][0]
+            final_codes = cv2.imdecode(np.frombuffer(Path(result['final']).read_bytes(), np.uint8),
+                                       cv2.IMREAD_UNCHANGED)[..., ::-1]
+            np.testing.assert_array_equal(final_codes, pixels)
+            self.assertEqual(result['bit_depth'], 16)
+            self.assertEqual(result['size'], [48,32])
 
     def test_protected_input_and_bad_aspect_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

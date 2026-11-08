@@ -5,8 +5,8 @@
     "F06"
   ],
   "unique_winner_selected": true,
-  "exported_functions_AST_identical": true,
-  "module_sha256": "1ab2386d7a45d113c3183300760670208220b68eadb5fa4aebf643c21f7fffd5",
+  "exported_functions_AST_identical": false,
+  "module_sha256": "cfe5d686be6ce8b105d1711733174829681c9739ad38a7503c598e9d5fcfee53",
   "sources": [
     {
       "frozen_source": "2026-11-02-edge-transfer/edge_transfer.py",
@@ -52,5 +52,12 @@
     }
   ],
   "selected_method": "F06",
-  "selected_on": "2026-11-04"
+  "selected_on": "2026-11-04",
+  "frozen_module_sha256": "1ab2386d7a45d113c3183300760670208220b68eadb5fa4aebf643c21f7fffd5",
+  "precision_io_extension": [
+    "load_source",
+    "srgb_to_linear",
+    "linear_to_srgb",
+    "export_result"
+  ]
 }
